@@ -16,6 +16,7 @@ import note_seq
 import seqio
 import t5
 import t5x
+import t5x.partitioning as _p
 
 from mt3 import metrics_utils
 from mt3 import models
@@ -53,8 +54,17 @@ class InferenceModel(object):
         self.sequence_length = {'inputs': self.inputs_length,
                                 'targets': self.outputs_length}
 
+        # Non-TPU bounds patch for GPU/CPU
+        if not any(d.platform == "tpu" for d in jax.devices()):
+            def _safe_bounds_from_last_device(_last_device):
+                return 1, 1, 1, 1
+            _p.bounds_from_last_device = _safe_bounds_from_last_device
+
         self.partitioner = t5x.partitioning.PjitPartitioner(
-            num_partitions=1)
+            num_partitions=1,
+            logical_axis_rules=t5x.partitioning.standard_logical_axis_rules(),
+            model_parallel_submesh=None,
+        )
 
         # Build Codecs and Vocabularies.
         self.spectrogram_config = spectrograms.SpectrogramConfig()
@@ -228,6 +238,11 @@ class InferenceModel(object):
 mt3_model = InferenceModel("/home/mt3user/checkpoints/mt3/", "mt3")
 piano_model = InferenceModel("/home/mt3user/checkpoints/ismir2021/", "ismir2021")
 
+MODELS = {
+    "mt3": mt3_model,
+    "piano": piano_model,
+}
+
 
 def get_transcription_b64(model: InferenceModel, audio) -> str:
     est_ns = model(audio)
@@ -302,6 +317,49 @@ def transcribe_piano():
 def transcribe_anythin():
     audio = get_audio_from_request()
     return {"data": get_transcription_b64(mt3_model, audio)}
+
+
+def load_audio_from_path(path: str):
+    return librosa.load(path, sr=SAMPLE_RATE)[0]
+
+
+def ensure_dir(path: str):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+
+def transcribe_to_path(model_key: str, audio_path: str, midi_path: str):
+    if model_key not in MODELS:
+        raise ValueError(f"unknown model: {model_key}")
+    audio = load_audio_from_path(audio_path)
+    est_ns = MODELS[model_key](audio)
+    ensure_dir(midi_path)
+    tmp_path = midi_path + ".tmp"
+    note_seq.sequence_proto_to_midi_file(est_ns, tmp_path)
+    os.replace(tmp_path, midi_path)
+
+
+@app.route("/batch-transcribe", methods=["POST"])
+def batch_transcribe():
+    payload = request.get_json(force=True)
+    model_key = payload.get("model", "piano")
+    jobs = payload.get("jobs", [])
+    results = []
+    for job in jobs:
+        audio_path = job.get("audio_path")
+        midi_path = job.get("midi_path")
+        status = "success"
+        try:
+            transcribe_to_path(model_key, audio_path, midi_path)
+        except Exception as e:
+            status = f"error: {e}"
+        results.append(
+            {
+                "audio_path": audio_path,
+                "midi_path": midi_path,
+                "status": status,
+            }
+        )
+    return {"model": model_key, "results": results}
 
 
 @app.route("/")

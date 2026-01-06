@@ -15,10 +15,43 @@ NOTE: I'm not an expert here and there may be steps here or steps in the Dockerf
 Once machine is setup properly (see above about setting up GPU), then just build and run the image...
 ```bash
 sudo docker build -t mt3 .
-sudo docker run -p 5000:5000 --gpus all mt3 # NOTE: you may need to adjust memory i.e. "-m 12000m"
+# mount input/output so the API can read/write files
+sudo docker run -p 5000:5000 --gpus all \
+  -v /ABS/PATH/to/data/asap_test_set:/data/input \
+  -v /ABS/PATH/to/output:/data/output \
+  mt3
 ```
 
-Once that's running, you can simply issue a POST request to `http://<container-ip>:5000/transcribe-anything` (or `http://<container-ip>:5000/transcribe-piano`) with POST data like `{"data": "<base64file16ksamplerate>"}`
+### Endpoints
+
+- `POST /transcribe-piano` — body: `{"data": "<base64 16k wav/mp3>"}` → returns base64 MIDI
+- `POST /transcribe-anything` — same as above, multitrack model
+- `POST /batch-transcribe` — body:
+  ```json
+  {
+    "model": "piano",               // or "mt3"
+    "jobs": [
+      {"audio_path": "/data/input/Bach/.../file.wav",
+       "midi_path": "/data/output/Bach/.../file.mid"}
+    ]
+  }
+  ```
+  The container reads audio from `audio_path` and writes MIDI to `midi_path` (dirs auto-created).
+
+### Client helper (in clef/src/inference/batch_transcribe.py)
+
+From the clef repo, run:
+```bash
+python -m inference.batch_transcribe \
+  --mode asap_batch \
+  --input-dir /ABS/PATH/to/data/asap_test_set \
+  --metadata-csv /ABS/PATH/to/data/asap_test_set/metadata.csv \
+  --output-dir /ABS/PATH/to/output \
+  --api-url http://localhost:5000/batch-transcribe \
+  --model piano
+```
+
+Once that's running, you can still issue a POST request to `http://<container-ip>:5000/transcribe-anything` (or `http://<container-ip>:5000/transcribe-piano`) with POST data like `{"data": "<base64file16ksamplerate>"}`
 
 Using a 3090 it should take less than a minute for most music files.
 
