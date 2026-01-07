@@ -350,6 +350,8 @@ def batch_transcribe():
         status = "success"
         try:
             transcribe_to_path(model_key, audio_path, midi_path)
+            # Clear JAX compilation cache after each file to prevent OOM
+            jax.clear_caches()
         except Exception as e:
             status = f"error: {e}"
         results.append(

@@ -2,6 +2,12 @@
 FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+# Disable XLA autotuner for older GPU compatibility (Titan RTX SM 7.5)
+ENV XLA_FLAGS="--xla_gpu_autotune_level=0"
+# JAX: use dynamic GPU memory allocation instead of preallocating
+ENV XLA_PYTHON_CLIENT_PREALLOCATE=false
+# TensorFlow: also use dynamic allocation
+ENV TF_FORCE_GPU_ALLOW_GROWTH=true
 
 RUN apt-get update && apt-get install -y \
     wget git curl \
